@@ -6,6 +6,8 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      BOT_TOKEN: ${{ secrets.TEST_BOT_TOKEN }}   # <-- берём токен из Secrets
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
