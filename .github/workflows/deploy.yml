@@ -1,30 +1,36 @@
 name: Deploy to Yandex Cloud VM
 
 on:
-  workflow_dispatch: # Запуск вручную через GitHub Actions
+  workflow_dispatch: {}
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H 158.160.46.65 >> ~/.ssh/known_hosts
+      - name: Set up SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
       - name: Deploy to server
+        shell: bash
         run: |
-          ssh vorobevavd@158.160.46.65 '
-            cd ~/telegram-bot-final &&
-            git pull &&
-            podman stop tg-bot || true &&
-            podman rm tg-bot || true &&
-            podman build -t tg-bot . &&
-            podman run -d --name tg-bot --env-file .env -p 8000:8000 tg-bot
-          
+          set -euo pipefail
+          ssh -o StrictHostKeyChecking=no vorobevavd@158.160.46.65 bash -s <<'EOF'
+          set -euo pipefail
+          cd ~/telegram-bot-final
+          echo ">>> git pull"
+          git fetch --all --prune
+          git checkout main
+          git pull --ff-only origin main
+
+          if [ ! -x ./deploy.sh ]; then
+            echo "ERROR: ./deploy.sh отсутствует или не исполняемый"; exit 1
+          fi
+
+          echo ">>> run ./deploy.sh"
+          ./deploy.sh
+          EOF
