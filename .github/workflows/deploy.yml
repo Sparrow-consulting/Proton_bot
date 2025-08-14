@@ -1,5 +1,4 @@
 name: Deploy to Yandex Cloud VM
-
 on:
   workflow_dispatch: {}
 
@@ -21,7 +20,17 @@ jobs:
           set -euo pipefail
           ssh -o StrictHostKeyChecking=no vorobevavd@158.160.46.65 bash -s <<'EOF'
           set -euo pipefail
-          cd ~/telegram-bot-final
+          APP_DIR="$HOME/telegram-bot-final"
+          REPO_URL="https://github.com/Sparrow-consulting/Proton_bot.git"
+
+          mkdir -p "$APP_DIR"
+          cd "$APP_DIR"
+
+          if [ ! -d .git ]; then
+            echo ">>> bootstrap: cloning repo into \$APP_DIR"
+            git clone "$REPO_URL" .
+          fi
+
           echo ">>> git pull"
           git fetch --all --prune
           git checkout main
