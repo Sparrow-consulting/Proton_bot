@@ -4,11 +4,12 @@ from pathlib import Path
 import types
 import importlib
 
-# Добавляем корень репозитория в PYTHONPATH (для импорта main.py)
+# Добавляем корень репозитория в PYTHONPATH
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-# Безопасные ENV для запуска приложения в тесте
-os.environ.setdefault("BOT_TOKEN", "dummy-token")
+# Безопасные ENV для запуска приложения в тесте:
+# токен валидного формата (НЕ боевой), чтобы aiogram не падал на валидации
+os.environ["BOT_TOKEN"] = "123456:TEST"
 os.environ.setdefault("LARAVEL_API_BASE", "https://example.invalid")
 
 def _safe_monkeypatch():
