@@ -34,7 +34,7 @@ app = FastAPI()
 
 @dp.message(Command("start"))
 async def handle_start(message: Message):
-    button = KeyboardButton(text="📱 Отправить номер телефона", request_contact=True)
+    button = KeyboardButton(text="📞 Поделиться контактом", request_contact=True)
     kb = ReplyKeyboardMarkup(
         keyboard=[[button]],
         resize_keyboard=True,
