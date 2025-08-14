@@ -1,0 +1,30 @@
+name: Deploy to Yandex Cloud VM
+
+on:
+  workflow_dispatch: # Запуск вручную через GitHub Actions
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H 158.160.46.65 >> ~/.ssh/known_hosts
+
+      - name: Deploy to server
+        run: |
+          ssh vorobevavd@158.160.46.65 '
+            cd ~/telegram-bot-final &&
+            git pull &&
+            podman stop tg-bot || true &&
+            podman rm tg-bot || true &&
+            podman build -t tg-bot . &&
+            podman run -d --name tg-bot --env-file .env -p 8000:8000 tg-bot
+          
