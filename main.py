@@ -88,7 +88,7 @@ async def handle_contact(message: Message):
             await message.answer("✅ Регистрация прошла успешно! Теперь вы будете получать уведомления.")
         else:
             logging.warning(f"Ошибка регистрации: {response.status_code} {response.text}")
-            await message.answer("❌ Ошибка регистрации. Попробуйте позже.")
+            await message.answer("⚠️ Что-то пошло не так. Попробуйте позже.")
     except Exception as e:
         logging.error(f"Ошибка при регистрации: {e}")
         await message.answer("Сервис временно недоступен.")
