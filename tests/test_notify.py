@@ -11,6 +11,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # токен валидного формата (НЕ боевой), чтобы aiogram не падал на валидации
 os.environ["BOT_TOKEN"] = "123456:TEST"
 os.environ.setdefault("LARAVEL_API_BASE", "https://example.invalid")
+os.environ.setdefault("LARAVEL_BEARER_TOKEN", "test-token")
+os.environ.setdefault("NOTIFY_SECRET", "test-secret")
 
 def _safe_monkeypatch():
     """Глушим внешние вызовы, чтобы тест не ходил в сеть/Telegram."""
@@ -57,7 +59,20 @@ def test_notify_ok():
     assert hasattr(main, "app"), "В main.py должен быть объект app (FastAPI)"
     client = TestClient(main.app)
 
-    payload = {"telegram_id": 123456789, "text": "CI smoke", "url": "https://example.com"}
-    r = client.post("/notify", json=payload)
+    # Новый формат данных для Laravel API
+    payload = {
+        "telegram_id": 123456789, 
+        "order_data": {
+            "order_id": "TEST-123",
+            "vehicle_type": "Экскаватор",
+            "location": "Москва",
+            "date_time": "01.01.2024 10:00",
+            "price": "50 000 ₽"
+        }
+    }
+    
+    # Используем Bearer token из config
+    headers = {"Authorization": f"Bearer {os.getenv('LARAVEL_BEARER_TOKEN', 'test-token')}"}
+    r = client.post("/notify", json=payload, headers=headers)
     assert r.status_code // 100 == 2, r.text
     assert r.headers.get("content-type", "").startswith("application/json")
