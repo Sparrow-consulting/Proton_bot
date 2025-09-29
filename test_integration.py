@@ -1,8 +1,10 @@
 import asyncio
 import aiohttp
 import json
+import pytest
 from datetime import datetime
 
+@pytest.mark.asyncio
 async def test_bot_integration():
     """Тестирование интеграции бота"""
     

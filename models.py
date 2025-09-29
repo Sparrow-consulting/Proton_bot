@@ -23,7 +23,7 @@ class LegacyNotification(BaseModel):
 
 class TelegramRegistration(BaseModel):
     """Регистрация пользователя в Telegram"""
-    phone: str = Field(..., regex=r'^\+?\d{10,15}$', description="Номер телефона")
+    phone: str = Field(..., pattern=r'^\+?\d{10,15}$', description="Номер телефона")
     telegram_id: Union[str, int] = Field(..., description="Telegram ID")
 
 class ApiResponse(BaseModel):
