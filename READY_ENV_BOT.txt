@@ -1,0 +1,42 @@
+# ================================================
+# PROTON TELEGRAM BOT - ГОТОВО К ИСПОЛЬЗОВАНИЮ
+# ================================================
+# Создайте файл .env и скопируйте туда это содержимое!
+
+# Telegram Bot
+BOT_TOKEN=7923122647:AAEHvu3KMz2J-9L-nmKH0jKf1TyWGdcdZ7c
+
+# Laravel API
+API_URL=https://app.protonrent.ru/api/v1
+
+# Bearer токен (СИНХРОНИЗИРОВАН с Backend!)
+LARAVEL_BEARER_TOKEN=68e21a0a7ce5193998a8289301a59b6e
+
+# Security
+NOTIFY_SECRET=proton-telegram-secret-2024
+WEBHOOK_SECRET=proton-secret-webhook-2024
+
+# Bot Server Settings
+BOT_HOST=0.0.0.0
+BOT_PORT=8000
+DEBUG=false
+
+# Logging Settings
+LOG_LEVEL=INFO
+LOG_FILE=bot.log
+
+# ================================================
+# ИНСТРУКЦИЯ ПО СОЗДАНИЮ .env:
+# ================================================
+# Выполните команды:
+# cd /Users/vorobevavd/PROTON_BOT_2_2/Proton_bot
+# cat READY_ENV_BOT.txt | grep -v "^#" | grep -v "^$" > .env
+# 
+# Или создайте .env вручную и скопируйте строки выше
+# ================================================
+# 
+# ПОСЛЕ ЭТОГО ЗАПУСТИТЕ БОТА:
+# ./start_bot.sh
+# или
+# python -m uvicorn main:app --host 0.0.0.0 --port 8000
+# ================================================
