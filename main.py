@@ -247,11 +247,14 @@ async def notify_laravel(
     )
     
     # Создаем inline кнопку
+    # Используем order_url если передан, иначе формируем из order_id
+    order_url = order_data.order_url or f"https://app.protonrent.ru/orders/{order_data.order_id}"
+    
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[[
             InlineKeyboardButton(
                 text="📋 Перейти к заявке",
-                url=f"https://app.protonrent.ru/orders/{order_data.order_id}"
+                url=order_url
             )
         ]]
     )

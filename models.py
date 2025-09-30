@@ -9,6 +9,7 @@ class OrderData(BaseModel):
     location: str = Field(..., description="Локация")
     date_time: str = Field(..., description="Дата и время")
     price: str = Field(..., description="Стоимость")
+    order_url: Optional[str] = Field(None, description="Полный URL заказа")
 
 class LaravelNotification(BaseModel):
     """Структура уведомления от Laravel"""

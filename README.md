@@ -77,10 +77,13 @@ Authorization: Bearer your-laravel-api-token
     "vehicle_type": "Экскаватор",
     "location": "Москва, ул. Примерная, 1",
     "date_time": "15.01.2024 14:30",
-    "price": "50 000 ₽"
+    "price": "50 000 ₽",
+    "order_url": "https://app.protonrent.ru/orders/ORDER-123"
   }
 }
 ```
+
+**Примечание:** Поле `order_url` опциональное. Если не указано, URL будет сформирован автоматически как `https://app.protonrent.ru/orders/{order_id}`
 
 **Ответ:**
 ```json
@@ -179,7 +182,8 @@ curl -X POST http://localhost:8000/notify \
       "vehicle_type": "Экскаватор",
       "location": "Москва",
       "date_time": "15.01.2024 14:30",
-      "price": "50 000 ₽"
+      "price": "50 000 ₽",
+      "order_url": "https://app.protonrent.ru/orders/TEST-123"
     }
   }'
 ```
@@ -244,7 +248,8 @@ $success = $telegramService->sendNotification($telegramId, [
     'vehicle_type' => $order->vehicleType->name,
     'location' => $order->getLocation(),
     'date_time' => $order->created_at->format('d.m.Y H:i'),
-    'price' => number_format($order->total_price, 0, ',', ' ') . ' ₽'
+    'price' => number_format($order->total_price, 0, ',', ' ') . ' ₽',
+    'order_url' => config('app.url') . '/orders/' . $order->id
 ]);
 
 // Проверка здоровья бота
@@ -262,7 +267,8 @@ public function handle(TelegramBotIntegrationService $telegramService): void
         'vehicle_type' => $this->order->vehicleType->name ?? 'Не указан',
         'location' => $this->getOrderLocation(),
         'date_time' => $this->order->created_at->format('d.m.Y H:i'),
-        'price' => number_format($this->order->total_price ?? 0, 0, ',', ' ') . ' ₽'
+        'price' => number_format($this->order->total_price ?? 0, 0, ',', ' ') . ' ₽',
+        'order_url' => config('app.url') . '/orders/' . $this->order->id
     ];
 
     $telegramService->sendNotification($this->user->telegram_id, $orderData);
