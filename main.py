@@ -13,6 +13,7 @@ from typing import Union
 
 from models import LaravelNotification, LegacyNotification, TelegramRegistration, ApiResponse, OrderData
 from config import *
+from storage import init_db
 
 # Настройка логирования
 logging.basicConfig(
@@ -51,6 +52,10 @@ async def lifespan(app: FastAPI):
     """Управление жизненным циклом приложения"""
     # Startup
     logger.info("🚀 Запуск Telegram бота...")
+    
+    # Инициализируем базу данных
+    init_db()
+    logger.info("✅ База данных инициализирована")
     
     # Устанавливаем команды бота
     commands = [
@@ -116,6 +121,10 @@ async def handle_stop(message: Message):
                 headers=headers
             ) as response:
                 if response.status == 200:
+                    # Удаляем пользователя из локальной БД
+                    from storage import remove_user
+                    remove_user(int(telegram_id))
+                    
                     await message.answer("🔕 Вы успешно отписались от уведомлений.")
                     logger.info(f"Пользователь {telegram_id} отписался от уведомлений")
                 else:
@@ -140,6 +149,7 @@ async def handle_contact(message: Message):
     phone_number = contact.phone_number
     
     # Нормализация номера телефона
+    phone_number = phone_number.replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
     if not phone_number.startswith('+'):
         phone_number = '+' + phone_number
     
@@ -164,6 +174,10 @@ async def handle_contact(message: Message):
             ) as response:
                 
                 if response.status == 200:
+                    # Добавляем пользователя в локальную БД для уведомлений
+                    from storage import add_user
+                    add_user(int(telegram_id))
+                    
                     success_text = (
                         "✅ <b>Регистрация успешна!</b>\n\n"
                         "Теперь вы будете получать уведомления о новых заявках "
