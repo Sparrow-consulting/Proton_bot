@@ -84,9 +84,10 @@ jobs:
     needs: validate
     if: needs.validate.outputs.should_deploy == 'true' && github.event.inputs.skip_tests != 'true'
     env:
-      BOT_TOKEN: ${{ secrets.BOT_TOKEN || '' }}
-      API_URL: ${{ secrets.API_URL || '' }}
-      NOTIFY_SECRET: ${{ secrets.NOTIFY_SECRET || '' }}
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN || '123456:TEST' }}
+      API_URL: ${{ secrets.API_URL || 'https://example.invalid' }}
+      NOTIFY_SECRET: ${{ secrets.NOTIFY_SECRET || 'test-secret' }}
+      LARAVEL_BEARER_TOKEN: ${{ secrets.LARAVEL_BEARER_TOKEN || 'test-token' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
