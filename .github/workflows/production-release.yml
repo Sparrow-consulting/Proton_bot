@@ -25,12 +25,18 @@ on:
         required: false
         default: false
         type: boolean
+      host_port:
+        description: 'Host port for deployment (defaults: prod=8000, staging=8080)'
+        required: false
+        type: string
 
 env:
   APP_NAME: proton-bot
   PRODUCTION_HOST: 158.160.46.65
   PRODUCTION_USER: vorobevavd
   PRODUCTION_DIR: ${{ github.event.inputs.environment == 'staging' && 'telegram-bot-staging' || 'telegram-bot-final' }}
+  HOST_PORT: ${{ github.event.inputs.host_port || (github.event.inputs.environment == 'staging' && '8080' || '8000') }}
+  APP_PORT: 8000
 
 jobs:
   validate:
@@ -189,6 +195,7 @@ jobs:
           echo "🚀 Starting deployment to ${{ github.event.inputs.environment }}..."
           echo "📦 Image: ${{ needs.build.outputs.image_tag }}"
           echo "🏠 Target: ${{ env.PRODUCTION_USER }}@${{ env.PRODUCTION_HOST }}:${{ env.PRODUCTION_DIR }}"
+          echo "🔌 Host Port: ${{ env.HOST_PORT }} -> App Port: ${{ env.APP_PORT }}"
           
           # Upload deployment info
           scp -o StrictHostKeyChecking=no deployment-info.json ${{ env.PRODUCTION_USER }}@${{ env.PRODUCTION_HOST }}:/tmp/
@@ -199,6 +206,8 @@ jobs:
           APP_DIR="$HOME/${{ env.PRODUCTION_DIR }}"
           REPO_URL="https://github.com/Sparrow-consulting/Proton_bot.git"
           IMAGE_TAG="${{ needs.build.outputs.image_tag }}"
+          HOST_PORT="${{ env.HOST_PORT }}"
+          APP_PORT="${{ env.APP_PORT }}"
           
           echo ">>> Creating backup of current deployment"
           if [ -d "$APP_DIR" ]; then
@@ -229,8 +238,24 @@ jobs:
             exit 1
           fi
           
-          echo ">>> Running deployment script"
-          ./deploy.sh
+          echo ">>> Stopping old proton_bot service"
+          sudo systemctl stop proton_bot.service 2>/dev/null || true
+          
+          echo ">>> Freeing port $HOST_PORT"
+          if command -v docker >/dev/null 2>&1; then
+            CTR="docker"
+          elif command -v podman >/dev/null 2>&1; then
+            CTR="podman"
+          else
+            echo "❌ Neither docker nor podman found"
+            exit 1
+          fi
+          
+          # Remove containers using the port
+          $CTR ps -q --filter "publish=${HOST_PORT}" | xargs -r $CTR rm -f || true
+          
+          echo ">>> Running deployment script with HOST_PORT=$HOST_PORT APP_PORT=$APP_PORT IMAGE_TAG=$IMAGE_TAG"
+          HOST_PORT="$HOST_PORT" APP_PORT="$APP_PORT" IMAGE_TAG="$IMAGE_TAG" ./deploy.sh
           
           echo ">>> Deployment completed successfully"
           EOF
