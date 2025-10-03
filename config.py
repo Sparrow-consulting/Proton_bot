@@ -28,7 +28,12 @@ LOG_FILE = os.getenv("LOG_FILE", "bot.log")
 
 # Validation
 if not NOTIFY_SECRET:
-    raise ValueError("NOTIFY_SECRET не найден в .env файле")
+    # В тестовой среде используем значение по умолчанию
+    import sys
+    if any('pytest' in arg for arg in sys.argv) or any('test' in arg for arg in sys.argv):
+        NOTIFY_SECRET = "test-secret"
+    else:
+        raise ValueError("NOTIFY_SECRET не найден в .env файле")
 
 # Ensure eBot secrets are available (only in production, not during tests)
 import sys
