@@ -2,9 +2,12 @@ import os
 import logging
 import asyncio
 import aiohttp
-from fastapi import FastAPI, Header, HTTPException, Depends
+import hmac
+import hashlib
+from fastapi import FastAPI, Header, HTTPException, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from aiogram import Bot, Dispatcher, types
+from aiogram.client.default import DefaultBotProperties
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, BotCommand, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.filters import Command
@@ -27,7 +30,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Инициализация бота
-bot = Bot(token=BOT_TOKEN)
+from aiogram.client.default import DefaultBotProperties
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode='HTML'))
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
@@ -46,16 +50,77 @@ async def verify_legacy_api_key(x_api_key: str = Header(default=None)):
         raise HTTPException(status_code=401, detail="Invalid API key")
     return x_api_key
 
+async def verify_webhook_signature(
+    request: Request,
+    x_signature: str = Header(default=None),
+    x_signature_alg: str = Header(default=None)
+):
+    """Проверка HMAC подписи для webhook запросов"""
+    if not x_signature or not x_signature_alg:
+        raise HTTPException(status_code=401, detail="Missing signature headers")
+    
+    if x_signature_alg != "HMAC-SHA256":
+        raise HTTPException(status_code=401, detail="Unsupported signature algorithm")
+    
+    # Получаем тело запроса
+    body = await request.body()
+    
+    # Вычисляем ожидаемую подпись
+    expected_signature = hmac.new(
+        EBOT_HMAC_SECRET.encode(),
+        body,
+        hashlib.sha256
+    ).hexdigest()
+    
+    # Проверяем подпись
+    provided_signature = x_signature.replace("sha256=", "")
+    if not hmac.compare_digest(expected_signature, provided_signature):
+        raise HTTPException(status_code=401, detail="Invalid signature")
+    
+    return True
+
+async def verify_ebot_auth(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    x_signature: str = Header(default=None),
+    x_signature_alg: str = Header(default=None)
+):
+    """Комбинированная проверка Bearer token и HMAC подписи для eBot webhook"""
+    # Проверяем Bearer token
+    if credentials.credentials != EBOT_API_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid authentication token")
+    
+    # Проверяем HMAC подпись
+    await verify_webhook_signature(request, x_signature, x_signature_alg)
+    
+    return credentials.credentials
+
 # FastAPI app
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Управление жизненным циклом приложения"""
     # Startup
     logger.info("🚀 Запуск Telegram бота...")
+    logger.info(f"🌐 API URL: {API_URL}")
+    logger.info(f"🔑 Token установлен: {bool(BOT_TOKEN)}")
+    logger.info(f"🔐 Bearer Token: {bool(LARAVEL_BEARER_TOKEN)}")
     
     # Инициализируем базу данных
     init_db()
     logger.info("✅ База данных инициализирована")
+    
+    # Удаляем webhook если есть (для polling режима)
+    try:
+        logger.info("🔄 Проверка webhook...")
+        webhook_info = await bot.get_webhook_info()
+        if webhook_info.url:
+            logger.info(f"🗑️ Удаляем webhook: {webhook_info.url}")
+            await bot.delete_webhook()
+            logger.info("✅ Webhook удален")
+        else:
+            logger.info("✅ Webhook не установлен")
+    except Exception as e:
+        logger.warning(f"⚠️ Ошибка при работе с webhook: {e}")
     
     # Устанавливаем команды бота
     commands = [
@@ -65,9 +130,22 @@ async def lifespan(app: FastAPI):
     ]
     await bot.set_my_commands(commands)
     
-    # Запускаем polling в фоне
-    asyncio.create_task(dp.start_polling(bot))
-    logger.info("✅ Telegram бот запущен успешно")
+    # Настраиваем webhook вместо polling для решения сетевых проблем
+    webhook_url = f"https://app.protonrent.ru/api/v1/telegram/webhook"
+    try:
+        logger.info(f"🔄 Настройка webhook: {webhook_url}")
+        await bot.set_webhook(webhook_url)
+        logger.info("✅ Webhook установлен успешно")
+        logger.info("✅ Telegram бот работает в webhook режиме")
+    except Exception as e:
+        logger.warning(f"⚠️ Не удалось установить webhook: {e}")
+        logger.info("🔄 Попытка запуска в polling режиме...")
+        try:
+            asyncio.create_task(dp.start_polling(bot))
+            logger.info("✅ Telegram бот запущен в polling режиме")
+        except Exception as polling_error:
+            logger.error(f"❌ Ошибка в polling: {polling_error}")
+            logger.error("💥 Telegram бот не может быть запущен")
     
     yield
     
@@ -213,7 +291,7 @@ async def root():
         message="Proton Telegram Bot API v2.0.0",
         data={
             "status": "active",
-            "endpoints": ["/notify", "/notify-legacy", "/health"],
+            "endpoints": ["/notify", "/notify-legacy", "/notify-webhook", "/health"],
             "telegram_bot": "@proton_rent_bot"
         }
     )
@@ -338,6 +416,97 @@ async def notify_legacy(
             status_code=500,
             detail=f"Failed to send legacy notification: {str(e)}"
         )
+
+@app.post("/notify-webhook", response_model=ApiResponse)
+async def notify_webhook(
+    request: Request,
+    token: str = Depends(verify_ebot_auth)
+):
+    """
+    eBot webhook endpoint для Laravel событий с Bearer + HMAC аутентификацией
+    Обрабатывает структуру событий от TelegramBotIntegrationService
+    """
+    try:
+        # Получаем данные события
+        event_data = await request.json()
+        
+        # Извлекаем информацию о заказе из структуры события
+        telegram_id = event_data.get("event_data", {}).get("telegram_id")
+        order_data = event_data.get("event_data", {}).get("order_data", {})
+        correlation_id = event_data.get("correlation_id")
+        idempotency_key = event_data.get("idempotency_key")
+        
+        if not telegram_id or not order_data:
+            raise HTTPException(status_code=400, detail="Invalid event structure")
+        
+        logger.info(f"Получено webhook событие для пользователя {telegram_id}, заказ {order_data.get('order_id')}, cid={correlation_id}")
+        
+        # Формируем красивое сообщение
+        message_text = (
+            "🚛 <b>Новая заявка на аренду спецтехники</b>\n\n"
+            f"📋 <b>Тип техники:</b> {order_data.get('vehicle_type', 'Не указан')}\n"
+            f"📍 <b>Локация:</b> {order_data.get('location', 'Не указана')}\n"
+            f"📅 <b>Дата и время:</b> {order_data.get('date_time', 'Не указано')}\n"
+            f"💰 <b>Стоимость:</b> {order_data.get('price', 'Не указана')}\n\n"
+            "Нажмите кнопку ниже для просмотра деталей заявки."
+        )
+        
+        # Создаем inline кнопку
+        order_url = order_data.get('order_url') or f"https://app.protonrent.ru/orders/{order_data.get('order_id')}"
+        
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="📋 Перейти к заявке",
+                    url=order_url
+                )
+            ]]
+        )
+        
+        await bot.send_message(
+            chat_id=telegram_id,
+            text=message_text,
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+        
+        logger.info(f"Webhook уведомление успешно отправлено пользователю {telegram_id}, cid={correlation_id}")
+        return ApiResponse(
+            success=True,
+            message="Webhook notification sent successfully",
+            data={
+                "telegram_id": telegram_id, 
+                "order_id": order_data.get('order_id'),
+                "correlation_id": correlation_id,
+                "idempotency_key": idempotency_key
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка обработки webhook события: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to process webhook event: {str(e)}"
+        )
+
+@app.post("/telegram/webhook")
+async def telegram_webhook(update: dict):
+    """
+    Webhook endpoint для получения обновлений от Telegram
+    """
+    try:
+        logger.info(f"📨 Получено webhook сообщение: {update}")
+        
+        # Обрабатываем обновление через диспетчер
+        telegram_update = types.Update(**update)
+        await dp.feed_update(bot, telegram_update)
+        
+        return {"ok": True}
+    except Exception as e:
+        logger.error(f"❌ Ошибка обработки webhook: {e}")
+        raise HTTPException(status_code=500, detail=f"Webhook error: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
