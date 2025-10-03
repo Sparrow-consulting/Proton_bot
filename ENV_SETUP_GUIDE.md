@@ -28,6 +28,10 @@ API_URL=https://app.protonrent.ru/api/v1
 # Сгенерировать: php artisan chatbot:generate-token (в ProtonBackend)
 LARAVEL_BEARER_TOKEN=your-laravel-api-token-here
 
+# eBot API токен (для совместимости с GitLab CI/CD скриптом)
+# Если не указан, используется LARAVEL_BEARER_TOKEN
+EBOT_API_TOKEN=your-ebot-api-token-here
+
 # ------------------------------------------------
 # Security
 # ------------------------------------------------
@@ -37,6 +41,10 @@ NOTIFY_SECRET=proton-telegram-secret-2024
 
 # Секрет для webhook от Telegram (X-Telegram-Bot-Api-Secret-Token)
 WEBHOOK_SECRET=your-webhook-secret-token
+
+# HMAC секрет для подписи webhook запросов (для GitLab CI/CD скрипта)
+# Если не указан, используется WEBHOOK_SECRET
+EBOT_HMAC_SECRET=your-hmac-secret-token
 
 # ------------------------------------------------
 # Bot Server Settings
