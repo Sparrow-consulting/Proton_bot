@@ -1,0 +1,335 @@
+name: Production Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+      version:
+        description: 'Release version (optional)'
+        required: false
+        type: string
+      skip_tests:
+        description: 'Skip tests (not recommended)'
+        required: false
+        default: false
+        type: boolean
+      force_deploy:
+        description: 'Force deployment even if tests fail'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  APP_NAME: proton-bot
+  PRODUCTION_HOST: 158.160.46.65
+  PRODUCTION_USER: vorobevavd
+  PRODUCTION_DIR: ${{ github.event.inputs.environment == 'staging' && 'telegram-bot-staging' || 'telegram-bot-final' }}
+
+jobs:
+  validate:
+    name: Validate Environment
+    runs-on: ubuntu-latest
+    outputs:
+      should_deploy: ${{ steps.validate.outputs.should_deploy }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate required secrets
+        id: validate
+        run: |
+          echo "Validating required secrets..."
+          
+          # Check if SSH key is available
+          if [ -z "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
+            echo "❌ SSH_PRIVATE_KEY secret is missing"
+            echo "should_deploy=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          # Check if bot token is available
+          if [ -z "${BOT_TOKEN:-}" ]; then
+            echo "❌ BOT_TOKEN secret is missing"
+            echo "should_deploy=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          echo "✅ All required secrets are present"
+          echo "should_deploy=true" >> $GITHUB_OUTPUT
+
+      - name: Check branch protection
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "⚠️  WARNING: This workflow is designed to deploy from main branch"
+          echo "Current branch: ${{ github.ref }}"
+          if [ "${{ github.event.inputs.force_deploy }}" != "true" ]; then
+            echo "❌ Deployment aborted. Use force_deploy=true to override."
+            exit 1
+          fi
+          echo "✅ Force deployment enabled, proceeding..."
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: validate
+    if: needs.validate.outputs.should_deploy == 'true' && github.event.inputs.skip_tests != 'true'
+    env:
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN || '' }}
+      API_URL: ${{ secrets.API_URL || '' }}
+      NOTIFY_SECRET: ${{ secrets.NOTIFY_SECRET || '' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+
+      - name: Run tests
+        run: |
+          echo "Running test suite..."
+          pytest -v --cov=. --cov-report=xml
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: false
+
+  build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: [validate, test]
+    if: always() && needs.validate.outputs.should_deploy == 'true' && (needs.test.result == 'success' || github.event.inputs.skip_tests == 'true' || github.event.inputs.force_deploy == 'true')
+    outputs:
+      image_tag: ${{ steps.build.outputs.image_tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Generate image tag
+        id: build
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION="$(date +%Y%m%d-%H%M%S)-$(git rev-parse --short HEAD)"
+          fi
+          IMAGE_TAG="${{ env.APP_NAME }}:$VERSION"
+          echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+          echo "Building image: $IMAGE_TAG"
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: ${{ steps.build.outputs.image_tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [validate, test, build]
+    if: always() && needs.validate.outputs.should_deploy == 'true' && (needs.test.result == 'success' || github.event.inputs.skip_tests == 'true' || github.event.inputs.force_deploy == 'true')
+    environment: ${{ github.event.inputs.environment }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Create deployment info
+        run: |
+          cat > deployment-info.json << EOF
+          {
+            "version": "${{ github.event.inputs.version || 'auto' }}",
+            "commit": "${{ github.sha }}",
+            "branch": "${{ github.ref_name }}",
+            "environment": "${{ github.event.inputs.environment }}",
+            "deployed_by": "${{ github.actor }}",
+            "deployed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "image_tag": "${{ needs.build.outputs.image_tag }}",
+            "workflow_run": "${{ github.run_id }}"
+          }
+          EOF
+
+      - name: Deploy to server
+        shell: bash
+        run: |
+          set -euo pipefail
+          
+          echo "🚀 Starting deployment to ${{ github.event.inputs.environment }}..."
+          echo "📦 Image: ${{ needs.build.outputs.image_tag }}"
+          echo "🏠 Target: ${{ env.PRODUCTION_USER }}@${{ env.PRODUCTION_HOST }}:${{ env.PRODUCTION_DIR }}"
+          
+          # Upload deployment info
+          scp -o StrictHostKeyChecking=no deployment-info.json ${{ env.PRODUCTION_USER }}@${{ env.PRODUCTION_HOST }}:/tmp/
+          
+          ssh -o StrictHostKeyChecking=no ${{ env.PRODUCTION_USER }}@${{ env.PRODUCTION_HOST }} bash -s <<'EOF'
+          set -euo pipefail
+          
+          APP_DIR="$HOME/${{ env.PRODUCTION_DIR }}"
+          REPO_URL="https://github.com/Sparrow-consulting/Proton_bot.git"
+          IMAGE_TAG="${{ needs.build.outputs.image_tag }}"
+          
+          echo ">>> Creating backup of current deployment"
+          if [ -d "$APP_DIR" ]; then
+            BACKUP_DIR="$APP_DIR.backup.$(date +%Y%m%d-%H%M%S)"
+            cp -r "$APP_DIR" "$BACKUP_DIR"
+            echo "✅ Backup created: $BACKUP_DIR"
+          fi
+          
+          echo ">>> Preparing application directory"
+          mkdir -p "$APP_DIR"
+          cd "$APP_DIR"
+          
+          if [ ! -d .git ]; then
+            echo ">>> Bootstrap: cloning repo into $APP_DIR"
+            git clone "$REPO_URL" .
+          fi
+          
+          echo ">>> Updating code from main branch"
+          git fetch --all --prune
+          git checkout main
+          git pull --ff-only origin main
+          
+          echo ">>> Copying deployment info"
+          cp /tmp/deployment-info.json .
+          
+          if [ ! -x ./deploy.sh ]; then
+            echo "❌ ERROR: ./deploy.sh отсутствует или не исполняемый"
+            exit 1
+          fi
+          
+          echo ">>> Running deployment script"
+          ./deploy.sh
+          
+          echo ">>> Deployment completed successfully"
+          EOF
+
+      - name: Verify deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          
+          echo "🔍 Verifying deployment..."
+          
+          # Wait a bit for the service to start
+          sleep 10
+          
+          # Check if the service is responding
+          ssh -o StrictHostKeyChecking=no ${{ env.PRODUCTION_USER }}@${{ env.PRODUCTION_HOST }} bash -s <<'EOF'
+          set -euo pipefail
+          
+          echo ">>> Checking container status"
+          if command -v docker >/dev/null 2>&1; then
+            CTR="docker"
+          elif command -v podman >/dev/null 2>&1; then
+            CTR="podman"
+          else
+            echo "❌ Neither docker nor podman found"
+            exit 1
+          fi
+          
+          if $CTR ps --filter "name=tg-bot" --filter "status=running" | grep -q tg-bot; then
+            echo "✅ Container is running"
+          else
+            echo "❌ Container is not running"
+            $CTR ps -a --filter "name=tg-bot"
+            exit 1
+          fi
+          
+          echo ">>> Checking application logs"
+          $CTR logs --tail 20 tg-bot
+          EOF
+
+      - name: Send deployment notification
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ Deployment to ${{ github.event.inputs.environment }} completed successfully!"
+            echo "📦 Version: ${{ github.event.inputs.version || 'auto' }}"
+            echo "🔗 Commit: ${{ github.sha }}"
+            echo "👤 Deployed by: ${{ github.actor }}"
+          else
+            echo "❌ Deployment to ${{ github.event.inputs.environment }} failed!"
+            echo "🔗 Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          fi
+
+  rollback:
+    name: Rollback (Manual)
+    runs-on: ubuntu-latest
+    needs: [deploy]
+    if: failure() && github.event.inputs.environment == 'production'
+    steps:
+      - name: Set up SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Rollback to previous version
+        shell: bash
+        run: |
+          set -euo pipefail
+          
+          echo "🔄 Starting rollback process..."
+          
+          ssh -o StrictHostKeyChecking=no ${{ env.PRODUCTION_USER }}@${{ env.PRODUCTION_HOST }} bash -s <<'EOF'
+          set -euo pipefail
+          
+          APP_DIR="$HOME/${{ env.PRODUCTION_DIR }}"
+          
+          echo ">>> Finding latest backup"
+          LATEST_BACKUP=$(ls -td $APP_DIR.backup.* 2>/dev/null | head -n1)
+          
+          if [ -z "$LATEST_BACKUP" ]; then
+            echo "❌ No backup found for rollback"
+            exit 1
+          fi
+          
+          echo ">>> Rolling back to: $LATEST_BACKUP"
+          
+          # Stop current container
+          if command -v docker >/dev/null 2>&1; then
+            CTR="docker"
+          elif command -v podman >/dev/null 2>&1; then
+            CTR="podman"
+          else
+            echo "❌ Neither docker nor podman found"
+            exit 1
+          fi
+          
+          $CTR stop tg-bot || true
+          $CTR rm tg-bot || true
+          
+          # Restore from backup
+          rm -rf "$APP_DIR"
+          cp -r "$LATEST_BACKUP" "$APP_DIR"
+          
+          # Restart service
+          cd "$APP_DIR"
+          ./deploy.sh
+          
+          echo "✅ Rollback completed successfully"
+          EOF
